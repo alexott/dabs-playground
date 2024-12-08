@@ -1,0 +1,64 @@
+# The main job for jdemo.
+
+new_cluster: &new_cluster
+  new_cluster:
+    spark_version: 15.4.x-scala2.12
+    instance_pool_id: ${var.instance_pool_id}
+    autoscale:
+      min_workers: 1
+      max_workers: 4
+    custom_tags:
+      project: jdemo
+
+# TODO: 
+# - Add parameters to the job, like, getting the table name to read
+# - override parameters per stage, or when running integration test
+
+resources:
+  jobs:
+    jdemo_job:
+      name: jdemo_job
+
+      trigger:
+        # Run this job every day, exactly one day from the last run; see https://docs.databricks.com/api/workspace/jobs/create#trigger
+        periodic:
+          interval: 1
+          unit: DAYS
+
+      email_notifications:
+        on_failure:
+          - user@domain.com
+
+      tasks:
+        - task_key: notebook_task
+          job_cluster_key: job_cluster
+          notebook_task:
+            notebook_path: ../src/notebook.ipynb
+        
+        - task_key: wheel_task
+          depends_on:
+            - task_key: notebook_task
+          
+          job_cluster_key: job_cluster
+          python_wheel_task:
+            package_name: jdemo
+            entry_point: main
+          libraries:
+            # By default we just include the .whl file generated for the jdemo package.
+            # See https://docs.databricks.com/dev-tools/bundles/library-dependencies.html
+            # for more information on how to add other libraries.
+            - whl: ../dist/*.whl
+
+        - task_key: jar_task
+          depends_on:
+            - task_key: notebook_task
+          #<<: *new_cluster
+          job_cluster_key: job_cluster
+          spark_jar_task:
+            main_class_name: net.alexott.demos.SparkDemo
+          libraries:
+            - jar: ../java-code/target/dabs-demo-0.0.1-jar-with-dependencies.jar
+
+      job_clusters:
+        - job_cluster_key: job_cluster
+          <<: *new_cluster

@@ -1,0 +1,68 @@
+# This is a Databricks asset bundle definition for jdemo.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+bundle:
+  name: jdemo
+
+include:
+  - resources/*.yml
+
+variables:
+  uniq_id:
+    description: "Some ID that will guarantee uniqueness of the object, i.e., PR number"
+    default: ${workspace.current_user.short_name}
+
+artifacts:
+  java-code:
+    path: ./java-code
+    build: mvn package
+    type: jar
+    files:
+      - source: ./java-code/target/dabs-demo-0.0.1-jar-with-dependencies.jar
+  wheel:
+    path: .
+    type: whl
+
+workspace:
+  host: https://adb-xxxx.17.azuredatabricks.net
+
+targets:
+  dev:
+    # The default target uses 'mode: development' to create a development copy.
+    # - Deployed resources get prefixed with '[dev my_user_name]'
+    # - Any job schedules and triggers are paused by default.
+    # See also https://docs.databricks.com/dev-tools/bundles/deployment-modes.html.
+    mode: development
+    default: true
+    workspace:
+      artifact_path: /Volumes/main/default/jars/${workspace.current_user.short_name}-${bundle.target}
+
+  staging:
+    presets:
+      name_prefix: "[Staging ${var.uniq_id}] "
+    workspace:
+      artifact_path: /Volumes/main/default/jars/${bundle.target}-${var.uniq_id}
+      root_path: /Workspace/Projects/${bundle.target}/${bundle.name}/${var.uniq_id}
+    resources: 
+      jobs: 
+        jdemo_job:
+          trigger:
+            pause_status: PAUSED
+
+  prod:
+    mode: production
+    presets:
+      name_prefix: "[Prod] "
+    workspace:
+      # We explicitly specify /Workspace/Users/user@domain.com to make sure we only have a single copy.
+      root_path: /Workspace/Projects/${bundle.target}/${bundle.name}
+      artifact_path: /Volumes/main/default/prod
+    resources: 
+      jobs: 
+        jdemo_job:
+          trigger:
+            pause_status: PAUSED # This is just for demo purposes, to avoid running the job in the demo
+    permissions:
+      - user_name: user@domain.com
+        level: CAN_MANAGE
+    run_as:
+      user_name: user@domain.com

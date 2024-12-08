@@ -1,0 +1,8 @@
+variables:
+  instance_pool_name:
+    description: Name of the instance pool to use
+    default: TFTests
+  instance_pool_id:
+    description: ID of instance pool
+    lookup:
+      instance_pool: ${var.instance_pool_name} 
