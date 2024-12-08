@@ -1,0 +1,54 @@
+# The name of the bundle. run `databricks bundle schema` to see the full bundle settings schema.
+bundle:
+  name: mlops
+
+variables:
+  current_target:
+    description: "Name of the current target environment (we can't use `bundle.target`)"
+  experiment_name:
+    description: Experiment name for the model training.
+    default: /Users/${workspace.current_user.userName}/${var.current_target}-mlops-experiment
+  model_name:
+    description: Model name for the model training.
+    default: mlops-model
+  # this is a placeholder for all phases, although it's used only in *-phase2
+  model_training_job_id:
+    description: "ID of model training job"
+    default: 0
+
+include:
+  # Resources folder contains ML artifact resources for the ML project that defines model and experiment
+  # And workflows resources for the ML project including model training -> validation -> deployment,
+  # feature engineering,  batch inference, quality monitoring, metric refresh, alerts and triggering retraining
+  - ./resources/*.yml
+
+workspace:
+  host: https://adb-xxxx.17.azuredatabricks.net
+
+# Deployment Target specific values for workspace
+targets:
+  dev-phase1:
+    default: true
+    variables:
+      current_target: dev
+
+  dev-phase2:
+    variables:
+      current_target: dev
+
+  test-phase1:
+    variables:
+      current_target: test
+
+  test-phase2:
+    variables:
+      current_target: test
+
+  prod:
+    variables:
+      current_target: prod
+
+  prod-phase2:
+    variables:
+      current_target: prod
+

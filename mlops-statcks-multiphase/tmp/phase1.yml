@@ -1,0 +1,231 @@
+new_cluster: &new_cluster
+  new_cluster:
+    num_workers: 3
+    spark_version: 15.3.x-cpu-ml-scala2.12
+    node_type_id: Standard_D3_v2
+    custom_tags:
+      clusterSource: mlops-stacks_0.4
+
+jobs_permissions: &jobs_permissions
+  permissions:
+    - level: CAN_VIEW
+      group_name: users
+
+jobs: &jobs
+    batch_inference_job:
+      name: ${var.current_target}-mlops-batch-inference-job
+      tasks:
+        - task_key: batch_inference_job
+          <<: *new_cluster
+          notebook_task:
+            notebook_path: ../deployment/batch_inference/notebooks/BatchInference.py
+            base_parameters:
+              env: ${var.current_target}
+              input_table_name: ${var.current_target}.mlops.feature_store_inference_input  # TODO: create input table for inference
+              output_table_name: ${var.current_target}.mlops.predictions
+              model_name: ${var.current_target}.mlops.${var.model_name}
+              # git source information of current ML resource deployment. It will be persisted as part of the workflow run
+              git_source_info: url:${bundle.git.origin_url}; branch:${bundle.git.branch}; commit:${bundle.git.commit}
+      schedule:
+        quartz_cron_expression: "0 0 11 * * ?" # daily at 11am
+        timezone_id: UTC
+      <<: *jobs_permissions
+      # If you want to turn on notifications for this job, please uncomment the below code,
+      # and provide a list of emails to the on_failure argument.
+      #
+      #  email_notifications:
+      #    on_failure:
+      #      - first@company.com
+      #      - second@company.com
+
+    write_feature_table_job:
+      name: ${var.current_target}-mlops-write-feature-table-job
+      job_clusters:
+        - job_cluster_key: write_feature_table_job_cluster
+          <<: *new_cluster
+      tasks:
+        - task_key: PickupFeatures
+          job_cluster_key: write_feature_table_job_cluster
+          notebook_task:
+            notebook_path: ../feature_engineering/notebooks/GenerateAndWriteFeatures.py
+            base_parameters:
+              # TODO modify these arguments to reflect your setup.
+              input_table_path: /databricks-datasets/nyctaxi-with-zipcodes/subsampled
+              # TODO: Empty start/end dates will process the whole range. Update this as needed to process recent data.
+              input_start_date: ""
+              input_end_date: ""
+              timestamp_column: tpep_pickup_datetime
+              output_table_name: ${var.current_target}.mlops.trip_pickup_features
+              features_transform_module: pickup_features
+              primary_keys: zip
+              # git source information of current ML resource deployment. It will be persisted as part of the workflow run
+              git_source_info: url:${bundle.git.origin_url}; branch:${bundle.git.branch}; commit:${bundle.git.commit}
+        - task_key: DropoffFeatures
+          job_cluster_key: write_feature_table_job_cluster
+          notebook_task:
+            notebook_path: ../feature_engineering/notebooks/GenerateAndWriteFeatures.py
+            base_parameters:
+              # TODO: modify these arguments to reflect your setup.
+              input_table_path: /databricks-datasets/nyctaxi-with-zipcodes/subsampled
+              # TODO: Empty start/end dates will process the whole range. Update this as needed to process recent data.
+              input_start_date: ""
+              input_end_date: ""
+              timestamp_column: tpep_dropoff_datetime
+              output_table_name: ${var.current_target}.mlops.trip_dropoff_features
+              features_transform_module: dropoff_features
+              primary_keys: zip
+              # git source information of current ML resource deployment. It will be persisted as part of the workflow run
+              git_source_info: url:${bundle.git.origin_url}; branch:${bundle.git.branch}; commit:${bundle.git.commit}
+      schedule:
+        quartz_cron_expression: "0 0 7 * * ?" # daily at 7am
+        timezone_id: UTC
+      <<: *jobs_permissions
+      # If you want to turn on notifications for this job, please uncomment the below code,
+      # and provide a list of emails to the on_failure argument.
+      #
+      #  email_notifications:
+      #    on_failure:
+      #      - first@company.com
+      #      - second@company.com
+
+    model_training_job:
+      name: ${var.current_target}-mlops-model-training-job
+      job_clusters:
+        - job_cluster_key: model_training_job_cluster
+          <<: *new_cluster
+      tasks:
+        - task_key: Train
+          job_cluster_key: model_training_job_cluster
+          notebook_task:
+            notebook_path: ../training/notebooks/TrainWithFeatureStore.py
+            base_parameters:
+              env: ${var.current_target}
+              # TODO: Update training_data_path
+              training_data_path: /databricks-datasets/nyctaxi-with-zipcodes/subsampled
+              experiment_name: ${var.experiment_name}
+              model_name: ${var.current_target}.mlops.${var.model_name}
+              pickup_features_table: ${var.current_target}.mlops.trip_pickup_features
+              dropoff_features_table: ${var.current_target}.mlops.trip_dropoff_features
+              # git source information of current ML resource deployment. It will be persisted as part of the workflow run
+              git_source_info: url:${bundle.git.origin_url}; branch:${bundle.git.branch}; commit:${bundle.git.commit}
+        - task_key: ModelValidation
+          job_cluster_key: model_training_job_cluster
+          depends_on:
+            - task_key: Train
+          notebook_task:
+            notebook_path: ../validation/notebooks/ModelValidation.py
+            base_parameters:
+              experiment_name: ${var.experiment_name}
+              # The `run_mode` defines whether model validation is enabled or not.
+              # It can be one of the three values:
+              # `disabled` : Do not run the model validation notebook.
+              # `dry_run`  : Run the model validation notebook. Ignore failed model validation rules and proceed to move
+              #               model to Production stage.
+              # `enabled`  : Run the model validation notebook. Move model to Production stage only if all model validation
+              #               rules are passing.
+              # TODO: update run_mode
+              run_mode: dry_run
+              # Whether to load the current registered "Production" stage model as baseline.
+              # Baseline model is a requirement for relative change and absolute change validation thresholds.
+              # TODO: update enable_baseline_comparison
+              enable_baseline_comparison: "false"
+              # Please refer to data parameter in mlflow.evaluate documentation https://mlflow.org/docs/latest/python_api/mlflow.html#mlflow.evaluate
+              # TODO: update validation_input
+              validation_input: SELECT * FROM delta.`dbfs:/databricks-datasets/nyctaxi-with-zipcodes/subsampled`
+              # A string describing the model type. The model type can be either "regressor" and "classifier".
+              # Please refer to model_type parameter in mlflow.evaluate documentation https://mlflow.org/docs/latest/python_api/mlflow.html#mlflow.evaluate
+              # TODO: update model_type
+              model_type: regressor
+              # The string name of a column from data that contains evaluation labels.
+              # Please refer to targets parameter in mlflow.evaluate documentation https://mlflow.org/docs/latest/python_api/mlflow.html#mlflow.evaluate
+              # TODO: targets
+              targets: fare_amount
+              # Specifies the name of the function in mlops/training_validation_deployment/validation/validation.py that returns custom metrics.
+              # TODO(optional): custom_metrics_loader_function
+              custom_metrics_loader_function: custom_metrics
+              # Specifies the name of the function in mlops/training_validation_deployment/validation/validation.py that returns model validation thresholds.
+              # TODO(optional): validation_thresholds_loader_function
+              validation_thresholds_loader_function: validation_thresholds
+              # Specifies the name of the function in mlops/training_validation_deployment/validation/validation.py that returns evaluator_config.
+              # TODO(optional): evaluator_config_loader_function
+              evaluator_config_loader_function: evaluator_config
+              # git source information of current ML resource deployment. It will be persisted as part of the workflow run
+              git_source_info: url:${bundle.git.origin_url}; branch:${bundle.git.branch}; commit:${bundle.git.commit}
+        - task_key: ModelDeployment
+          job_cluster_key: model_training_job_cluster
+          depends_on:
+            - task_key: ModelValidation
+          notebook_task:
+            notebook_path: ../deployment/model_deployment/notebooks/ModelDeployment.py
+            base_parameters:
+              env: ${var.current_target}
+              # git source information of current ML resource deployment. It will be persisted as part of the workflow run
+              git_source_info: url:${bundle.git.origin_url}; branch:${bundle.git.branch}; commit:${bundle.git.commit}
+      schedule:
+        quartz_cron_expression: "0 0 9 * * ?" # daily at 9am
+        timezone_id: UTC
+      <<: *jobs_permissions
+      # If you want to turn on notifications for this job, please uncomment the below code,
+      # and provide a list of emails to the on_failure argument.
+      #
+      #  email_notifications:
+      #    on_failure:
+      #      - first@company.com
+      #      - second@company.com
+
+
+experiment_permissions: &experiment_permissions
+  permissions:
+    - level: CAN_READ
+      group_name: users
+
+# Allow users to execute models in Unity Catalog
+model_grants: &model_grants
+  grants:
+    - privileges:
+        - EXECUTE
+      principal: account users
+
+# Defines model and experiments
+model: &model
+      model:
+        name: ${var.model_name}
+        catalog_name: ${var.current_target}
+        schema_name: mlops
+        comment: Registered model in Unity Catalog for the "mlops" ML Project for ${var.current_target} deployment target.
+        <<: *model_grants
+
+experiment: &experiment
+    experiment:
+      name: ${var.experiment_name}
+      <<: *experiment_permissions
+      description: MLflow Experiment used to track runs for mlops project.
+
+
+targets:
+  dev-phase1:
+    resources:
+      jobs:
+        <<: *jobs
+      registered_models:
+        <<: *model
+      experiments:
+        <<: *experiment
+
+  test-phase1:
+    resources:
+      jobs:
+        <<: *jobs
+      registered_models:
+        <<: *model
+      experiments:
+        <<: *experiment
+
+  prod-phase1:
+    resources:
+      jobs:
+        <<: *jobs
+      registered_models:
+        <<: *model
+      experiments:
+        <<: *experiment

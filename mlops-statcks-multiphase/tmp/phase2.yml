@@ -1,0 +1,105 @@
+# Please complete all the TODOs in this file.
+# The regression monitor defined here works OOB with this example regression notebook: https://learn.microsoft.com/azure/databricks/_extras/notebooks/source/monitoring/regression-monitor
+# NOTE: Monitoring only works on Unity Catalog tables.
+
+new_cluster: &new_cluster
+  new_cluster:
+    num_workers: 3
+    spark_version: 15.3.x-cpu-ml-scala2.12
+    node_type_id: Standard_D3_v2
+    custom_tags:
+      clusterSource: mlops-stacks_0.4
+
+common_permissions: &permissions
+  permissions:
+    - level: CAN_VIEW
+      group_name: users
+
+quality_monitor: &quality_monitor
+  mlops_quality_monitor:
+    table_name: dev.mlops.predictions
+    # TODO: Update the output schema name as per your requirements
+    output_schema_name: ${var.current_target}.mlops
+    # TODO: Update the below parameters as per your requirements
+    assets_dir: /Users/${workspace.current_user.userName}/databricks_lakehouse_monitoring
+    inference_log:
+      granularities: [1 day]
+      model_id_col: model_id
+      prediction_col: prediction
+      label_col: price
+      problem_type: PROBLEM_TYPE_REGRESSION
+      timestamp_col: timestamp
+    schedule:
+      quartz_cron_expression: 0 0 8 * * ? # Run Every day at 8am
+      timezone_id: UTC
+
+retraining_job: &retraining_job
+    retraining_job:
+      name: ${var.current_target}-mlops-monitoring-retraining-job
+      tasks:
+        - task_key: monitored_metric_violation_check
+          <<: *new_cluster
+          notebook_task:
+            notebook_path: ../monitoring/notebooks/MonitoredMetricViolationCheck.py
+            base_parameters:
+              env: ${var.current_target}
+              table_name_under_monitor: dev.mlops.predictions
+              # TODO: Update the metric to be monitored and violation threshold
+              metric_to_monitor: root_mean_squared_error
+              metric_violation_threshold: 100
+              num_evaluation_windows: 5
+              num_violation_windows: 2
+
+        - task_key: is_metric_violated
+          depends_on:
+            - task_key: monitored_metric_violation_check
+          condition_task:
+            op: EQUAL_TO
+            left: "{{tasks.monitored_metric_violation_check.values.is_metric_violated}}"
+            right: "true"
+
+        - task_key: trigger_retraining
+          depends_on:
+            - task_key: is_metric_violated
+              outcome: "true"
+          run_job_task:
+            job_id: ${var.model_training_job_id}
+
+      schedule:
+        quartz_cron_expression: "0 0 18 * * ?" # daily at 6pm
+        timezone_id: UTC
+      <<: *permissions
+
+targets:
+  dev-phase2:
+    variables:
+      model_training_job_id:
+        lookup:
+          job: "${var.current_target}-mlops-model-training-job"
+    resources:
+      quality_monitors:
+        <<: *quality_monitor
+      jobs:
+        <<: *retraining_job
+
+  test-phase2:
+    variables:
+      model_training_job_id:
+        lookup:
+          job: "${var.current_target}-mlops-model-training-job"
+    resources:
+      quality_monitors:
+        <<: *quality_monitor
+      jobs:
+        <<: *retraining_job
+
+  prod-phase2:
+    variables:
+      model_training_job_id:
+        lookup:
+          job: "${var.current_target}-mlops-model-training-job"
+    resources:
+      quality_monitors:
+        <<: *quality_monitor
+      jobs:
+        <<: *retraining_job
