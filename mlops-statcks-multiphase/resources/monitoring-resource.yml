@@ -23,7 +23,7 @@ quality_monitor: &quality_monitor
   mlops_quality_monitor:
     table_name: dev.mlops.predictions
     # TODO: Update the output schema name as per your requirements
-    output_schema_name: ${bundle.target}.mlops
+    output_schema_name: ${var.current_target}.mlops
     # TODO: Update the below parameters as per your requirements
     assets_dir: /Users/${workspace.current_user.userName}/databricks_lakehouse_monitoring
     inference_log:
@@ -47,7 +47,7 @@ retraining_job: &retraining_job
             notebook_path: ../monitoring/notebooks/MonitoredMetricViolationCheck.py
             base_parameters:
               env: ${var.current_target}
-              table_name_under_monitor: dev.mlops.predictions
+              table_name_under_monitor: ${var.current_target}.mlops.predictions
               # TODO: Update the metric to be monitored and violation threshold
               metric_to_monitor: root_mean_squared_error
               metric_violation_threshold: 100
