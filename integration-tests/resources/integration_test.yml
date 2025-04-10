@@ -1,0 +1,53 @@
+targets:
+  test:
+    resources:
+      jobs:
+        dabs1_job:
+          tasks:
+          - task_key: setup
+            notebook_task:
+              notebook_path: ../src/setup_test.ipynb
+              base_parameters:
+                catalog: main
+                schema: tmp
+                table: itest
+
+          - task_key: notebook_task
+            depends_on:
+              - task_key: setup
+            
+            notebook_task:
+              notebook_path: ../src/main_nb.ipynb
+              base_parameters:
+                catalog: main
+                schema: tmp
+                table: itest
+                target_table: itest_copy
+
+          - task_key: validate
+            depends_on:
+              - task_key: notebook_task
+
+            run_if: ALL_DONE
+            
+            notebook_task:
+              notebook_path: ../src/validate_test.ipynb
+              base_parameters:
+                catalog: main
+                schema: tmp
+                target_table: itest_copy
+              
+          - task_key: cleanup
+            depends_on:
+              - task_key: validate
+
+            
+            notebook_task:
+              notebook_path: ../src/cleanup_test.ipynb
+              base_parameters:
+                catalog: main
+                schema: tmp
+                table: itest
+                target_table: itest_copy
+
+

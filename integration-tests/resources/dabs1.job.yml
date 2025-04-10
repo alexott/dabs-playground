@@ -1,0 +1,26 @@
+# The main job for dabs1.
+resources:
+  jobs:
+    dabs1_job:
+      name: dabs1_job
+
+      trigger:
+        # Run this job every day, exactly one day from the last run; see https://docs.databricks.com/api/workspace/jobs/create#trigger
+        periodic:
+          interval: 1
+          unit: DAYS
+
+      #email_notifications:
+      #  on_failure:
+      #    - your_email@example.com
+
+      tasks:
+        - task_key: notebook_task
+          notebook_task:
+            notebook_path: ../src/main_nb.ipynb
+            base_parameters:
+              catalog: main
+              schema: default
+              table: nsg_logs
+              target_table: nsg_logs_copy
+              
