@@ -1,0 +1,22 @@
+variables:
+  notification_settings:
+    description: "Webhook notification config"
+    type: complex
+    default: {}
+  notification_name:
+    description: "Name of the notification destination"
+    default: ""
+  notification_id:
+    description: "ID of the notification destination (placeholder)"
+    default: ""
+
+targets:
+  prod:
+    variables:
+      notification_name: "Slack native"
+      notification_id:
+        lookup:
+          notification_destination: ${var.notification_name}
+      notification_settings:
+        on_failure:
+          - id: ${var.notification_id}
